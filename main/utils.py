@@ -2,7 +2,7 @@ import numpy as np
 
 
 def e_ICL():
-    "TODO: Refactor this function"
+    "TODO: Go theory!"
     pass
     
 
@@ -102,9 +102,8 @@ def gamma_star(y, x, lam):
     gamma = np.linalg.solve(vec_H.T @ vec_H + (N / d) * lam * np.eye(d * (d + 1)), vec_H.T @ y_last)
     return gamma.reshape(d, d + 1)
 
-# OLD
 
-
+# === LEGACY CODE BELOW, NOT USED IN CURRENT EXPERIMENTS, BUT KEEPING FOR REFERENCE ===
 def Householder(beta, x):
     s = np.sign(beta[0])
     u = np.zeros_like(beta)
@@ -135,7 +134,7 @@ def construct_H_NEW(beta, alpha, sigma_noise):
     y = theta_beta * s + sigma_noise * np.random.randn(1)
     return (d / N) * np.outer(b.flatten(), new_av), y
 
-# @njit(fastmath=True)
+
 def construct_HHT_fast_NEW(beta, alpha, sigma_noise):
     n, d = beta.shape
     H = np.zeros((d * (d + 1), n))
@@ -145,7 +144,6 @@ def construct_HHT_fast_NEW(beta, alpha, sigma_noise):
         H[:, i] = h.reshape(-1)
     return H @ H.T, H @ y_ary
 
-# @njit(fastmath=True)
 def learn_Gamma_fast_NEW(beta, alpha, sigma_noise, lam, tau_max):
     n, d = beta.shape
     n_max = np.int64(tau_max * d ** 2)
