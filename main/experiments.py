@@ -52,8 +52,9 @@ def run_experiments(jsonl_file_path='experiment_results.jsonl'):
         res[beta] = {}
         for alpha in alphas:
             mse_runs = []
+            ell = int(alpha * d)
+            e_icl_trace_ = e_ICL_trace(Gamma, d, ell, rho, beta)
             for run in range(monte_carlo_runs):
-                ell = int(alpha * d)
                 logger.info(f'Experiment starting: beta={beta}, alpha={alpha}, ell={ell}, d={d}, rho={rho}')
                 
                 y_train, x_train, w_train, w_task_family_train, epsilon = draw_pretraining_torch(N, d, k, ell, rho, seed + run, device=device)
@@ -61,7 +62,7 @@ def run_experiments(jsonl_file_path='experiment_results.jsonl'):
                 mse = test_error_torch(Gamma, N_test, beta, ell, rho, w_task_family_train, d, seed)
                 
                 mse_runs.append(mse)
-                logger.info(f'   beta={beta}, alpha={alpha}, ell={ell}, d={d}, rho={rho}, run: {run}/{monte_carlo_runs}, run_mse: {mse}')
+                logger.info(f'   beta={beta}, alpha={alpha}, ell={ell}, d={d}, rho={rho}, run: {run}/{monte_carlo_runs}, run_mse: {mse}, e_icl_trace: {e_icl_trace_}')
             logger.info(f'End experiment with alpha: {alpha}, beta: {beta} | mse_runs: {mse_runs}, mean_mse: {np.mean(mse_runs)}, std_mse: {np.std(mse_runs)}')
             res[beta][alpha] = mse_runs
 
@@ -71,6 +72,7 @@ def run_experiments(jsonl_file_path='experiment_results.jsonl'):
                 'mse_runs': mse_runs,
                 'mean_mse': np.mean(mse_runs),
                 'std_mse': np.std(mse_runs),
+                'e_ICL_trace': e_icl_trace_,
             }
             with open(jsonl_file_path, 'a') as f:
                 f.write(json.dumps(jsonl_entry) + '\n')

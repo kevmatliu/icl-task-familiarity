@@ -2,9 +2,25 @@ import numpy as np
 import torch
 
 
-def e_ICL():
-    "TODO: Go theory!"
-    pass
+def e_ICL_trace(Gamma, d, ell, rho, beta, dtype=torch.float64):
+    I_d = torch.eye(d, dtype=dtype)
+    zero = torch.zeros(1, d, dtype=dtype)
+
+    alpha = ell / d
+    A = torch.cat([(1 - beta ** 2) * I_d, zero], dim=0)
+
+    B_upper = torch.cat(
+        [d / ell * (1 + rho) + (1 - beta ** 2) * I_d, zero.T], 
+        dim=1
+    )
+    B_lower = torch.cat(
+        [zero, torch.tensor([(1 + rho) ** 2], dtype=dtype)[:, None]], 
+        dim=1
+    )
+    B = torch.cat([B_upper, B_lower], dim=0)
+    res = 1. / d * torch.trace((Gamma @ B) @ Gamma.T) - 2./d * torch.trace(Gamma @ A) + (1 + rho)
+
+    return res.item()
     
 
 def draw_pretraining(N, d, k, ell, rho, seed):
@@ -257,13 +273,18 @@ if __name__ == "__main__":
     N = 1
     ell = 2
     d = 4
+    k = 2
+    rho = 0.5
 
-    x = np.random.randn(N, ell + 1, d) / np.sqrt(d)
-    y = np.random.randn(N, ell + 1)
+    print('Getting training data...')
+    y, x, w, w_task_family_train, epsilon = draw_pretraining_torch(N, d, k, ell, rho, seed=10)
+    print('Finished!\n')
+    print('Getting H_z..')
+    H_z_block = H_Z_torch(y, x)
+    print(H_z_block)
+    print('Finished!\n')
+    Gamma_star = gamma_star_torch(y, x, lam=1e-3)
+    print(Gamma_star)
 
-    print(x)
-    print(y)
-
-    H_Z_block = np.einsum('ni,nij->nj', y[:, :ell], x[:, :ell, :]).reshape(N, 1, d)
-    print(H_Z_block.shape)
-    print(H_Z_block)
+    print('Getting e_icl')
+    print(e_ICL_trace(Gamma_star, d, ell, rho, beta=0.5))
