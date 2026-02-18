@@ -1,0 +1,31 @@
+2026-02-18 15:50:50,911 | __main__ | INFO | Experiment starting: beta=1.0, alpha=2.35, ell=235, d=100, rho=0.1
+2026-02-18 15:51:00,473 | __main__ | INFO |    beta=1.0, alpha=2.35, ell=235, d=100, rho=0.1, run: 0/1, run_mse: 0.09565607200756865
+2026-02-18 15:51:00,474 | __main__ | INFO | End experiment with alpha: 2.35, beta: 1.0 | mse_runs: [0.09565607200756865], mean_mse: 0.09565607200756865, std_mse: 0.0
+2026-02-18 15:51:00,478 | __main__ | INFO | Experiment starting: beta=1.0, alpha=5.5, ell=550, d=100, rho=0.1
+2026-02-18 15:51:10,114 | __main__ | INFO |    beta=1.0, alpha=5.5, ell=550, d=100, rho=0.1, run: 0/1, run_mse: 0.08168761112004909
+2026-02-18 15:51:10,115 | __main__ | INFO | End experiment with alpha: 5.5, beta: 1.0 | mse_runs: [0.08168761112004909], mean_mse: 0.08168761112004909, std_mse: 0.0
+2026-02-18 15:51:10,117 | __main__ | INFO | Experiment starting: beta=1.0, alpha=9.62, ell=961, d=100, rho=0.1
+2026-02-18 15:51:19,759 | __main__ | INFO |    beta=1.0, alpha=9.62, ell=961, d=100, rho=0.1, run: 0/1, run_mse: 0.10274982873877288
+2026-02-18 15:51:19,759 | __main__ | INFO | End experiment with alpha: 9.62, beta: 1.0 | mse_runs: [0.10274982873877288], mean_mse: 0.10274982873877288, std_mse: 0.0
+2026-02-18 15:51:19,761 | __main__ | INFO | Experiment starting: beta=1.0, alpha=22.7, ell=2270, d=100, rho=0.1
+2026-02-18 15:51:30,112 | __main__ | INFO |    beta=1.0, alpha=22.7, ell=2270, d=100, rho=0.1, run: 0/1, run_mse: 0.0896908134293999
+2026-02-18 15:51:30,112 | __main__ | INFO | End experiment with alpha: 22.7, beta: 1.0 | mse_runs: [0.0896908134293999], mean_mse: 0.0896908134293999, std_mse: 0.0
+2026-02-18 15:51:30,115 | __main__ | INFO | Experiment starting: beta=0.9, alpha=2.35, ell=235, d=100, rho=0.1
+2026-02-18 15:51:39,622 | __main__ | INFO |    beta=0.9, alpha=2.35, ell=235, d=100, rho=0.1, run: 0/1, run_mse: 0.08818886597313055
+2026-02-18 15:51:39,622 | __main__ | INFO | End experiment with alpha: 2.35, beta: 0.9 | mse_runs: [0.08818886597313055], mean_mse: 0.08818886597313055, std_mse: 0.0
+2026-02-18 15:51:39,624 | __main__ | INFO | Experiment starting: beta=0.9, alpha=5.5, ell=550, d=100, rho=0.1
+2026-02-18 15:51:49,149 | __main__ | INFO |    beta=0.9, alpha=5.5, ell=550, d=100, rho=0.1, run: 0/1, run_mse: 0.08248648468549717
+2026-02-18 15:51:49,150 | __main__ | INFO | End experiment with alpha: 5.5, beta: 0.9 | mse_runs: [0.08248648468549717], mean_mse: 0.08248648468549717, std_mse: 0.0
+2026-02-18 15:51:49,152 | __main__ | INFO | Experiment starting: beta=0.9, alpha=9.62, ell=961, d=100, rho=0.1
+2026-02-18 15:51:58,907 | __main__ | INFO |    beta=0.9, alpha=9.62, ell=961, d=100, rho=0.1, run: 0/1, run_mse: 0.10819755114010877
+2026-02-18 15:51:58,908 | __main__ | INFO | End experiment with alpha: 9.62, beta: 0.9 | mse_runs: [0.10819755114010877], mean_mse: 0.10819755114010877, std_mse: 0.0
+2026-02-18 15:51:58,910 | __main__ | INFO | Experiment starting: beta=0.9, alpha=22.7, ell=2270, d=100, rho=0.1
+2026-02-18 15:52:09,070 | __main__ | INFO |    beta=0.9, alpha=22.7, ell=2270, d=100, rho=0.1, run: 0/1, run_mse: 0.08945039898697395
+2026-02-18 15:52:09,070 | __main__ | INFO | End experiment with alpha: 22.7, beta: 0.9 | mse_runs: [0.08945039898697395], mean_mse: 0.08945039898697395, std_mse: 0.0
+2026-02-18 15:52:09,072 | __main__ | INFO | Experiment starting: beta=0.75, alpha=2.35, ell=235, d=100, rho=0.1
+2026-02-18 15:52:18,362 | __main__ | INFO |    beta=0.75, alpha=2.35, ell=235, d=100, rho=0.1, run: 0/1, run_mse: 0.08490099938414178
+2026-02-18 15:52:18,362 | __main__ | INFO | End experiment with alpha: 2.35, beta: 0.75 | mse_runs: [0.08490099938414178], mean_mse: 0.08490099938414178, std_mse: 0.0
+2026-02-18 15:52:18,364 | __main__ | INFO | Experiment starting: beta=0.75, alpha=5.5, ell=550, d=100, rho=0.1
+2026-02-18 15:52:27,778 | __main__ | INFO |    beta=0.75, alpha=5.5, ell=550, d=100, rho=0.1, run: 0/1, run_mse: 0.08414469037135895
+2026-02-18 15:52:27,778 | __main__ | INFO | End experiment with alpha: 5.5, beta: 0.75 | mse_runs: [0.08414469037135895], mean_mse: 0.08414469037135895, std_mse: 0.0
+2026-02-18 15:52:27,780 | __main__ | INFO | Experiment starting: beta=0.75, alpha=9.62, ell=961, d=100, rho=0.1

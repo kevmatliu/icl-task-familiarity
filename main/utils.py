@@ -1,4 +1,5 @@
 import numpy as np
+import torch
 
 
 def e_ICL():
@@ -26,6 +27,23 @@ def draw_pretraining(N, d, k, ell, rho, seed):
 
     return y, x, w, w_task_family_train, epsilon
 
+def draw_pretraining_torch(N, d, k, ell, rho, seed, device='cpu', dtype=torch.float64):
+    torch.manual_seed(seed)
+    factory_kwargs = dict(device=device, dtype=dtype)
+    
+    x = torch.randn(N, ell + 1, d, **factory_kwargs) / torch.sqrt(torch.tensor(d, dtype=dtype))
+    
+    w_task_family_train = torch.randn(k, d, **factory_kwargs)
+    w_task_family_train /= torch.linalg.norm(w_task_family_train, dim=1, keepdim=True)
+    
+    w_train_samples = torch.randint(0, k, (N,), device=device)
+    w = w_task_family_train[w_train_samples]  # shape (N, d)
+
+    # y_i = x_i @ w_t + epsilon_i
+    epsilon = torch.randn(N, ell + 1, **factory_kwargs) * torch.sqrt(torch.tensor(rho, dtype=dtype))
+    y = torch.einsum('nij,nj->ni', x, w) + epsilon  # shape (N, ell + 1)
+
+    return y, x, w, w_task_family_train, epsilon
 
 def draw_test(N_test, w_task_family_train, beta, d, ell, rho, seed):
     """
@@ -51,22 +69,44 @@ def draw_test(N_test, w_task_family_train, beta, d, ell, rho, seed):
     w_test = w_task_family_test[w_test_samples]  # shape (N_test, d)
 
     epsilon = np.random.randn(N_test, ell + 1) * np.sqrt(rho)  # noise with variance rho
-    y_test = beta * np.einsum('nij,nj->ni', x_test, w_test) + epsilon  # shape (N_test, ell + 1)
+    y_test = np.einsum('nij,nj->ni', x_test, w_test) + epsilon  # shape (N_test, ell + 1)
 
     return y_test, x_test, w_test, w_task_family_test
 
+def draw_test_torch(N_test, w_task_family_train, beta, d, ell, rho, seed, device='cpu', dtype=torch.float64):
+    torch.manual_seed(seed)
+    factory_kwargs = dict(device=device, dtype=dtype)
 
-def test_error(Gamma, N_test, beta, ell, rho, w_task_family_train, d, seed):
-    y_test, x_test, w_test, w_task_family_test = draw_test(
-        N_test, w_task_family_train, beta, d, ell, rho, seed
-    )
+    x_test = torch.randn(N_test, ell + 1, d, **factory_kwargs) / torch.sqrt(torch.tensor(d, dtype=torch.float64))
+    k = w_task_family_train.shape[0]
 
-    H_z_test = H_Z(y_test, x_test)  # N_test by d by (d + 1)
-    y_pred = np.einsum('nkl,kl->n', H_z_test, Gamma) # N_test array 
+    zeta = torch.randn(k, d, **factory_kwargs)
+    proj = torch.sum(zeta * w_task_family_train, dim=1, keepdim=True) # (k, 1)
+    zeta_perp = zeta - proj * w_task_family_train  # (k, d)
+    zeta_perp /= (torch.linalg.norm(zeta_perp, dim=1, keepdim=True) + 1e-12)
 
-    mse = np.mean((y_pred - y_test[:, ell]) ** 2)
-    return mse
+    w_task_family_test = beta * w_task_family_train + torch.sqrt(torch.tensor(1 - beta ** 2)) * zeta_perp
+    w_test_samples = torch.randint(0, k, (N_test,), device=device)
+    w_test = w_task_family_test[w_test_samples]  # shape (N_test, d)
 
+    epsilon = torch.randn(N_test, ell + 1, **factory_kwargs) * torch.sqrt(torch.tensor(rho, dtype=torch.float64))
+    y_test = torch.einsum('nij,nj->ni', x_test, w_test) + epsilon
+
+    return y_test, x_test, w_test, w_task_family_test
+
+def H_Z_torch(y, x):
+    """
+    Producing H_Z. For each of N sequences, we produce d by (d + 1) feature matrix.
+    """
+    N, ell_plus_1, d = x.shape
+    ell = ell_plus_1 - 1
+
+    H_Z_block = torch.einsum('ni,nij->nj', y[:, :ell], x[:, :ell, :]).reshape(N, 1, d) * d / ell
+    y_square_sum = torch.sum(y[:, :ell] ** 2, dim=1).reshape(N, 1, 1) / ell
+    H_Z_res = torch.cat([H_Z_block, y_square_sum], dim=2)  # N by 1 by (d + 1)
+
+    H_Z_res = H_Z_res * x[:, ell, :].reshape(N, d, 1)  # N by d by (d + 1)
+    return H_Z_res
 
 def H_Z(y, x):
     """
@@ -87,8 +127,6 @@ def H_Z(y, x):
     H_Z = H_Z * x[:, ell, :].reshape(N, d, 1)  # N by d by (d + 1)
     return H_Z
 
-def vec(A):
-    return A.flatten()
 
 def gamma_star(y, x, lam):
     N, ell, d = x.shape
@@ -97,10 +135,47 @@ def gamma_star(y, x, lam):
     H = H_Z(y, x).reshape(N, d * (d + 1))
     y_last = y[:, ell].reshape(N)
 
-    vec_H = H.reshape(N, d * (d + 1))
-
-    gamma = np.linalg.solve(vec_H.T @ vec_H + (N / d) * lam * np.eye(d * (d + 1)), vec_H.T @ y_last)
+    gamma = np.linalg.solve(H.T @ H + (N / d) * lam * np.eye(d * (d + 1)), H.T @ y_last)
     return gamma.reshape(d, d + 1)
+
+
+def gamma_star_torch(y, x, lam):
+    """
+    Solve for optimal Gamma using ridge regression logic.
+    """
+    N, ell_plus_1, d = x.shape
+    ell = ell_plus_1 - 1
+    
+    H = H_Z_torch(y, x).reshape(N, d * (d + 1))
+    y_last = y[:, ell].reshape(N)
+    reg = (N / d) * lam * torch.eye(d * (d + 1), device=x.device)
+    lhs = H.T @ H + reg
+    rhs = H.T @ y_last
+    
+    gamma = torch.linalg.solve(lhs, rhs)
+    return gamma.reshape(d, d + 1)
+
+def test_error(Gamma, N_test, beta, ell, rho, w_task_family_train, d, seed):
+    y_test, x_test, w_test, w_task_family_test = draw_test(
+        N_test, w_task_family_train, beta, d, ell, rho, seed
+    )
+
+    H_z_test = H_Z(y_test, x_test)  # N_test by d by (d + 1)
+    y_pred = np.einsum('nkl,kl->n', H_z_test, Gamma) # N_test array 
+
+    mse = np.mean((y_pred - y_test[:, ell]) ** 2)
+    return mse
+
+def test_error_torch(Gamma, N_test, beta, ell, rho, w_task_family_train, d, seed, device='cpu'):
+    y_test, x_test, w_test, w_task_family_test = draw_test_torch(
+        N_test, w_task_family_train, beta, d, ell, rho, seed, device=device
+    )
+
+    H_z_test = H_Z_torch(y_test, x_test)  # N_test by d by (d + 1)
+    y_pred = torch.einsum('nkl,kl->n', H_z_test, Gamma) # N_test array 
+
+    mse = torch.mean((y_pred - y_test[:, ell]) ** 2)
+    return mse.item()
 
 
 # === LEGACY CODE BELOW, NOT USED IN CURRENT EXPERIMENTS, BUT KEEPING FOR REFERENCE ===
