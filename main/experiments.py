@@ -31,7 +31,7 @@ def run_experiments(jsonl_file_path='experiment_results.jsonl'):
     d = 100
     rho = 0.5
     betas = [0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0]
-    betas = betas[::-1]
+    # betas = betas[::-1]
     alphas = [2.35, 5.5, 9.62, 22.7, 100, 1_000]
 
     lam = 1e-9
@@ -52,16 +52,19 @@ def run_experiments(jsonl_file_path='experiment_results.jsonl'):
         res[beta] = {}
         for alpha in alphas:
             mse_runs = []
+            e_icl_trace_runs = []
             ell = int(alpha * d)
-            e_icl_trace_ = e_ICL_trace(Gamma, d, ell, rho, beta)
             for run in range(monte_carlo_runs):
                 logger.info(f'Experiment starting: beta={beta}, alpha={alpha}, ell={ell}, d={d}, rho={rho}')
                 
                 y_train, x_train, w_train, w_task_family_train, epsilon = draw_pretraining_torch(N, d, k, ell, rho, seed + run, device=device)
                 Gamma = gamma_star_torch(y_train, x_train, lam)
                 mse = test_error_torch(Gamma, N_test, beta, ell, rho, w_task_family_train, d, seed)
+
+                e_icl_trace_ = e_ICL_trace(Gamma, d, ell, rho, beta)
                 
                 mse_runs.append(mse)
+                e_icl_trace_runs.append(e_icl_trace_)
                 logger.info(f'   beta={beta}, alpha={alpha}, ell={ell}, d={d}, rho={rho}, run: {run}/{monte_carlo_runs}, run_mse: {mse}, e_icl_trace: {e_icl_trace_}')
             logger.info(f'End experiment with alpha: {alpha}, beta: {beta} | mse_runs: {mse_runs}, mean_mse: {np.mean(mse_runs)}, std_mse: {np.std(mse_runs)}')
             res[beta][alpha] = mse_runs
@@ -72,7 +75,8 @@ def run_experiments(jsonl_file_path='experiment_results.jsonl'):
                 'mse_runs': mse_runs,
                 'mean_mse': np.mean(mse_runs),
                 'std_mse': np.std(mse_runs),
-                'e_ICL_trace': e_icl_trace_,
+                'mean_e_ICL_trace': np.mean(e_icl_trace_runs),
+                'std_e_ICL_trace': np.std(e_icl_trace_runs)
             }
             with open(jsonl_file_path, 'a') as f:
                 f.write(json.dumps(jsonl_entry) + '\n')

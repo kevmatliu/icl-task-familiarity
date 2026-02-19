@@ -3,7 +3,7 @@
 #SBATCH --error=logs/%x-%j.err
 #SBATCH --mem=32G
 #SBATCH --job-name=icl_task_familiarity
-#SBATCH --partition=kempner
+#SBATCH --partition=kempner_requeue
 #SBATCH --account=kempner_pehlevan_lab
 #SBATCH -n 16
 #SBATCH --gres=gpu:1

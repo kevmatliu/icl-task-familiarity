@@ -1,0 +1,15 @@
+2026-02-18 20:56:29,996 | __main__ | INFO | Experiment starting: beta=1.0, alpha=2.35, ell=235, d=100, rho=0.5
+2026-02-18 20:56:40,754 | __main__ | INFO |    beta=1.0, alpha=2.35, ell=235, d=100, rho=0.5, run: 0/10, run_mse: 0.45523825782044136, e_icl_trace: 1.5154196226623706
+2026-02-18 20:56:40,757 | __main__ | INFO | Experiment starting: beta=1.0, alpha=2.35, ell=235, d=100, rho=0.5
+2026-02-18 20:56:51,844 | __main__ | INFO |    beta=1.0, alpha=2.35, ell=235, d=100, rho=0.5, run: 1/10, run_mse: 0.4643041789897431, e_icl_trace: 1.515713307644593
+2026-02-18 20:56:51,846 | __main__ | INFO | Experiment starting: beta=1.0, alpha=2.35, ell=235, d=100, rho=0.5
+2026-02-18 20:57:02,679 | __main__ | INFO |    beta=1.0, alpha=2.35, ell=235, d=100, rho=0.5, run: 2/10, run_mse: 0.4535623444133012, e_icl_trace: 1.508267254768214
+2026-02-18 20:57:02,679 | __main__ | INFO | Experiment starting: beta=1.0, alpha=2.35, ell=235, d=100, rho=0.5
+2026-02-18 20:57:13,246 | __main__ | INFO |    beta=1.0, alpha=2.35, ell=235, d=100, rho=0.5, run: 3/10, run_mse: 0.4487285060921784, e_icl_trace: 1.5090819916831624
+2026-02-18 20:57:13,246 | __main__ | INFO | Experiment starting: beta=1.0, alpha=2.35, ell=235, d=100, rho=0.5
+2026-02-18 20:57:23,843 | __main__ | INFO |    beta=1.0, alpha=2.35, ell=235, d=100, rho=0.5, run: 4/10, run_mse: 0.4485941524046764, e_icl_trace: 1.5241836467948426
+2026-02-18 20:57:23,844 | __main__ | INFO | Experiment starting: beta=1.0, alpha=2.35, ell=235, d=100, rho=0.5
+2026-02-18 20:57:34,404 | __main__ | INFO |    beta=1.0, alpha=2.35, ell=235, d=100, rho=0.5, run: 5/10, run_mse: 0.46241554214076186, e_icl_trace: 1.5180992043573107
+2026-02-18 20:57:34,404 | __main__ | INFO | Experiment starting: beta=1.0, alpha=2.35, ell=235, d=100, rho=0.5
+2026-02-18 20:57:44,996 | __main__ | INFO |    beta=1.0, alpha=2.35, ell=235, d=100, rho=0.5, run: 6/10, run_mse: 0.470268451385939, e_icl_trace: 1.518379803451593
+2026-02-18 20:57:44,996 | __main__ | INFO | Experiment starting: beta=1.0, alpha=2.35, ell=235, d=100, rho=0.5

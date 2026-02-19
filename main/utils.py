@@ -2,9 +2,11 @@ import numpy as np
 import torch
 
 
-def e_ICL_trace(Gamma, d, ell, rho, beta, dtype=torch.float64):
-    I_d = torch.eye(d, dtype=dtype)
-    zero = torch.zeros(1, d, dtype=dtype)
+def e_ICL_trace(Gamma, d, ell, rho, beta, device='cuda', dtype=torch.float64):
+    factory_kwargs = dict(device=device, dtype=dtype)
+    
+    I_d = torch.eye(d, **factory_kwargs)
+    zero = torch.zeros(1, d, **factory_kwargs)
 
     alpha = ell / d
     A = torch.cat([(1 - beta ** 2) * I_d, zero], dim=0)
@@ -14,7 +16,7 @@ def e_ICL_trace(Gamma, d, ell, rho, beta, dtype=torch.float64):
         dim=1
     )
     B_lower = torch.cat(
-        [zero, torch.tensor([(1 + rho) ** 2], dtype=dtype)[:, None]], 
+        [zero, torch.tensor([(1 + rho) ** 2], **factory_kwargs)[:, None]], 
         dim=1
     )
     B = torch.cat([B_upper, B_lower], dim=0)
@@ -43,11 +45,11 @@ def draw_pretraining(N, d, k, ell, rho, seed):
 
     return y, x, w, w_task_family_train, epsilon
 
-def draw_pretraining_torch(N, d, k, ell, rho, seed, device='cpu', dtype=torch.float64):
+def draw_pretraining_torch(N, d, k, ell, rho, seed, device='cuda', dtype=torch.float64):
     torch.manual_seed(seed)
     factory_kwargs = dict(device=device, dtype=dtype)
     
-    x = torch.randn(N, ell + 1, d, **factory_kwargs) / torch.sqrt(torch.tensor(d, dtype=dtype))
+    x = torch.randn(N, ell + 1, d, **factory_kwargs) / torch.sqrt(torch.tensor(d, **factory_kwargs))
     
     w_task_family_train = torch.randn(k, d, **factory_kwargs)
     w_task_family_train /= torch.linalg.norm(w_task_family_train, dim=1, keepdim=True)
@@ -56,7 +58,7 @@ def draw_pretraining_torch(N, d, k, ell, rho, seed, device='cpu', dtype=torch.fl
     w = w_task_family_train[w_train_samples]  # shape (N, d)
 
     # y_i = x_i @ w_t + epsilon_i
-    epsilon = torch.randn(N, ell + 1, **factory_kwargs) * torch.sqrt(torch.tensor(rho, dtype=dtype))
+    epsilon = torch.randn(N, ell + 1, **factory_kwargs) * torch.sqrt(torch.tensor(rho, **factory_kwargs))
     y = torch.einsum('nij,nj->ni', x, w) + epsilon  # shape (N, ell + 1)
 
     return y, x, w, w_task_family_train, epsilon
@@ -89,11 +91,11 @@ def draw_test(N_test, w_task_family_train, beta, d, ell, rho, seed):
 
     return y_test, x_test, w_test, w_task_family_test
 
-def draw_test_torch(N_test, w_task_family_train, beta, d, ell, rho, seed, device='cpu', dtype=torch.float64):
+def draw_test_torch(N_test, w_task_family_train, beta, d, ell, rho, seed, device='cuda', dtype=torch.float64):
     torch.manual_seed(seed)
     factory_kwargs = dict(device=device, dtype=dtype)
 
-    x_test = torch.randn(N_test, ell + 1, d, **factory_kwargs) / torch.sqrt(torch.tensor(d, dtype=torch.float64))
+    x_test = torch.randn(N_test, ell + 1, d, **factory_kwargs) / torch.sqrt(torch.tensor(d, **factory_kwargs))
     k = w_task_family_train.shape[0]
 
     zeta = torch.randn(k, d, **factory_kwargs)
@@ -101,11 +103,11 @@ def draw_test_torch(N_test, w_task_family_train, beta, d, ell, rho, seed, device
     zeta_perp = zeta - proj * w_task_family_train  # (k, d)
     zeta_perp /= (torch.linalg.norm(zeta_perp, dim=1, keepdim=True) + 1e-12)
 
-    w_task_family_test = beta * w_task_family_train + torch.sqrt(torch.tensor(1 - beta ** 2)) * zeta_perp
+    w_task_family_test = beta * w_task_family_train + torch.sqrt(torch.tensor(1 - beta ** 2, **factory_kwargs)) * zeta_perp
     w_test_samples = torch.randint(0, k, (N_test,), device=device)
     w_test = w_task_family_test[w_test_samples]  # shape (N_test, d)
 
-    epsilon = torch.randn(N_test, ell + 1, **factory_kwargs) * torch.sqrt(torch.tensor(rho, dtype=torch.float64))
+    epsilon = torch.randn(N_test, ell + 1, **factory_kwargs) * torch.sqrt(torch.tensor(rho, **factory_kwargs))
     y_test = torch.einsum('nij,nj->ni', x_test, w_test) + epsilon
 
     return y_test, x_test, w_test, w_task_family_test
@@ -182,7 +184,7 @@ def test_error(Gamma, N_test, beta, ell, rho, w_task_family_train, d, seed):
     mse = np.mean((y_pred - y_test[:, ell]) ** 2)
     return mse
 
-def test_error_torch(Gamma, N_test, beta, ell, rho, w_task_family_train, d, seed, device='cpu'):
+def test_error_torch(Gamma, N_test, beta, ell, rho, w_task_family_train, d, seed, device='cuda'):
     y_test, x_test, w_test, w_task_family_test = draw_test_torch(
         N_test, w_task_family_train, beta, d, ell, rho, seed, device=device
     )
