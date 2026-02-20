@@ -1,22 +1,29 @@
 import numpy as np
 import torch
+import correlation as corr
 
 
-def e_ICL_trace(Gamma, d, ell, rho, beta, device='cuda', dtype=torch.float64):
+def e_ICL_trace(Gamma, d, ell, rho, beta, cov_train, device='cuda', dtype=torch.float64):
+    device = Gamma.device if isinstance(Gamma, torch.Tensor) else device
     factory_kwargs = dict(device=device, dtype=dtype)
+
+    # if cov_train is None:
+    #     cov_train = torch.eye(d, **factory_kwargs)
     
     I_d = torch.eye(d, **factory_kwargs)
     zero = torch.zeros(1, d, **factory_kwargs)
 
-    alpha = ell / d
-    A = torch.cat([(1 - beta ** 2) * I_d, zero], dim=0)
-
-    B_upper = torch.cat(
-        [d / ell * (1 + rho) + (1 - beta ** 2) * I_d, zero.T], 
-        dim=1
+    A = torch.cat(
+        [(1 - beta ** 2) * I_d + (beta ** 2) * cov_train, zero], 
+        dim=0
     )
+
+    B_upper = torch.cat([
+        d / ell * (1 + rho) + (1 - beta ** 2) * I_d + (beta ** 2) * cov_train,
+        zero.T
+    ], dim=1)
     B_lower = torch.cat(
-        [zero, torch.tensor([(1 + rho) ** 2], **factory_kwargs)[:, None]], 
+        [zero, torch.tensor([(1 + rho) ** 2], **factory_kwargs)[:, None]],
         dim=1
     )
     B = torch.cat([B_upper, B_lower], dim=0)
@@ -25,33 +32,42 @@ def e_ICL_trace(Gamma, d, ell, rho, beta, device='cuda', dtype=torch.float64):
     return res.item()
     
 
-def draw_pretraining(N, d, k, ell, rho, seed):
-    """
-    Generates pretraining for N sample sequences, dimension d, k tasks, sequence length ell, and noise variance rho.
-    - x_i ~ N(0, I_d/sqrt d)
-    - w_t ~ Unif(S^{d - 1})
-    - y_i = x_i @ w_t + epsilon_i, where epsilon_i ~ N(0, rho)
-    """
-    np.random.seed(seed)
-    x = np.random.randn(N, ell + 1, d) / np.sqrt(d) # d-dimensional vectors with N sequences of length ell+1, normalized by sqrt(d)
+# def draw_pretraining(N, d, k, ell, rho, seed):
+#     """
+#     Generates pretraining for N sample sequences, dimension d, k tasks, sequence length ell, and noise variance rho.
+#     - x_i ~ N(0, I_d/sqrt d)
+#     - w_t ~ Unif(S^{d - 1})
+#     - y_i = x_i @ w_t + epsilon_i, where epsilon_i ~ N(0, rho)
+#     """
+#     np.random.seed(seed)
+#     x = np.random.randn(N, ell + 1, d) / np.sqrt(d) # d-dimensional vectors with N sequences of length ell+1, normalized by sqrt(d)
     
-    w_task_family_train = np.random.randn(k, d)  # k task vectors in d dimensions
-    w_task_family_train /= np.linalg.norm(w_task_family_train, axis=1, keepdims=True)  # normalizing to 1
-    w_train_samples = np.random.randint(0, k, size=N)
-    w = w_task_family_train[w_train_samples]  # shape (N, d)
+#     w_task_family_train = np.random.randn(k, d)  # k task vectors in d dimensions
+#     w_task_family_train /= np.linalg.norm(w_task_family_train, axis=1, keepdims=True)  # normalizing to 1
+#     w_train_samples = np.random.randint(0, k, size=N)
+#     w = w_task_family_train[w_train_samples]  # shape (N, d)
 
-    epsilon = np.random.randn(N, ell + 1) * np.sqrt(rho)  # noise with variance rho
-    y = np.einsum('nij,nj->ni', x, w) + epsilon  # shape (N, ell + 1)
+#     epsilon = np.random.randn(N, ell + 1) * np.sqrt(rho)  # noise with variance rho
+#     y = np.einsum('nij,nj->ni', x, w) + epsilon  # shape (N, ell + 1)
 
-    return y, x, w, w_task_family_train, epsilon
+#     return y, x, w, w_task_family_train, epsilon
 
-def draw_pretraining_torch(N, d, k, ell, rho, seed, device='cuda', dtype=torch.float64):
+def draw_pretraining_torch(N, d, k, ell, rho, seed, strength=0.5, cov_type='identity', device='cuda', dtype=torch.float64):
     torch.manual_seed(seed)
     factory_kwargs = dict(device=device, dtype=dtype)
-    
+
+    if cov_type == 'identity':
+        cov_func = corr.identity_cov
+    elif cov_type == 'exp':
+        cov_func = corr.exp_cov
+    elif cov_type == 'powerlaw':
+        cov_func = corr.powerlaw_cov
+
     x = torch.randn(N, ell + 1, d, **factory_kwargs) / torch.sqrt(torch.tensor(d, **factory_kwargs))
     
-    w_task_family_train = torch.randn(k, d, **factory_kwargs)
+    w_cov = cov_func(k, strength, device=device, dtype=dtype)
+    print(w_cov)
+    w_task_family_train = corr.sample_task_weights(w_cov, d, k)
     w_task_family_train /= torch.linalg.norm(w_task_family_train, dim=1, keepdim=True)
     
     w_train_samples = torch.randint(0, k, (N,), device=device)
@@ -61,7 +77,7 @@ def draw_pretraining_torch(N, d, k, ell, rho, seed, device='cuda', dtype=torch.f
     epsilon = torch.randn(N, ell + 1, **factory_kwargs) * torch.sqrt(torch.tensor(rho, **factory_kwargs))
     y = torch.einsum('nij,nj->ni', x, w) + epsilon  # shape (N, ell + 1)
 
-    return y, x, w, w_task_family_train, epsilon
+    return y, x, w, w_task_family_train, w_cov, epsilon
 
 def draw_test(N_test, w_task_family_train, beta, d, ell, rho, seed):
     """
@@ -275,11 +291,14 @@ if __name__ == "__main__":
     N = 1
     ell = 2
     d = 4
-    k = 2
+    k = 6
     rho = 0.5
 
     print('Getting training data...')
-    y, x, w, w_task_family_train, epsilon = draw_pretraining_torch(N, d, k, ell, rho, seed=10)
+    y, x, w, w_task_family_train, epsilon = draw_pretraining_torch(N, d, k, ell, rho, cov_type='powerlaw', seed=10, device='cpu')
+
+    print(w_task_family_train)
+
     print('Finished!\n')
     print('Getting H_z..')
     H_z_block = H_Z_torch(y, x)
