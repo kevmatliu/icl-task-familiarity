@@ -6,6 +6,7 @@ import torch
 import time
 from pathlib import Path
 
+import config
 from utils import *
 
 BASE_DIR = Path(__file__).resolve().parent
@@ -29,7 +30,6 @@ logger = logging.getLogger(__name__)
 
 def run_experiments(jsonl_file_path):
     d = 100
-    rho = 0.5
     betas = [0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0]
     # betas = betas[::-1]
     alphas = [2.35, 5.5, 9.62, 22.7, 100, 1_000]
@@ -37,16 +37,13 @@ def run_experiments(jsonl_file_path):
     strengths = [0.1, 0.25, 0.5, 0.75, 0.9, 0.99]
 
     lam = 1e-9
-    monte_carlo_runs = 10
+    monte_carlo_runs = 20
     
     # defaults
     N = 100
     k = 50
     N_test = 50
     seed = 10
-
-    device = 'cuda' if torch.cuda.is_available() else 'cpu'
-    # device = 'cpu'
 
     for beta in betas:
         for alpha in alphas:
@@ -58,11 +55,23 @@ def run_experiments(jsonl_file_path):
                     for run in range(monte_carlo_runs):
                         logger.info(f'Experiment starting: beta={beta}, alpha={alpha}, ell={ell}, d={d}, rho={rho}')
                         
-                        y_train, x_train, w_train, w_task_family_train, w_cov, epsilon = draw_pretraining_torch(N, d, k, ell, rho, seed + run, strength, device=device)
-                        Gamma = gamma_star_torch(y_train, x_train, lam)
-                        mse = test_error_torch(Gamma, N_test, beta, ell, rho, w_task_family_train, d, seed)
+                        with torch.no_grad():
+                            y_train, x_train, w_train, w_task_family_train, w_cov, epsilon = draw_pretraining_torch(
+                                N, d, k, ell, rho, seed + run, strength, cov_type='exp', device=config.DEVICE
+                            )
+                            Gamma = gamma_star_torch(y_train, x_train, lam)
+                            mse = test_error_torch(Gamma, N_test, beta, ell, rho, w_task_family_train, d, seed)
 
-                        e_icl_trace_ = e_ICL_trace(Gamma, d, ell, rho, beta, w_cov)
+                        empirical_cov = torch.cov(w_task_family_train.T)
+                        empirical_mean = torch.mean(w_task_family_train, dim=0)
+
+                        try:
+                            e_icl_trace_ = e_ICL_trace(
+                                Gamma, d, ell, rho, beta, b_train=empirical_mean, R_train=empirical_cov, device=config.DEVICE
+                            )
+                        except Exception as e:
+                            logger.error(f'Error computing e_ICL_trace: {e}')
+                            e_icl_trace_ = float('nan')
                         
                         mse_runs.append(mse)
                         e_icl_trace_runs.append(e_icl_trace_)

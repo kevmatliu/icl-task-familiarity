@@ -1,5 +1,7 @@
 commands.txt
 **/__pycache__/
+main/results/
+main/logs_stdout/
 venv/
 logs/
 .gitignore

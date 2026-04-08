@@ -1,9 +1,10 @@
 import numpy as np
 import torch
 import correlation as corr
+import config
 
 
-def e_ICL_trace(Gamma, d, ell, rho, beta, cov_train, device='cuda', dtype=torch.float64):
+def e_ICL_trace(Gamma, d, ell, rho, beta, R_train, b_train, device=config.DEVICE, dtype=torch.float64):
     device = Gamma.device if isinstance(Gamma, torch.Tensor) else device
     factory_kwargs = dict(device=device, dtype=dtype)
 
@@ -11,23 +12,24 @@ def e_ICL_trace(Gamma, d, ell, rho, beta, cov_train, device='cuda', dtype=torch.
     #     cov_train = torch.eye(d, **factory_kwargs)
     
     I_d = torch.eye(d, **factory_kwargs)
-    zero = torch.zeros(1, d, **factory_kwargs)
+    # zero = torch.zeros(1, d, **factory_kwargs)
+
+    t_r = ((1 + rho) * beta * b_train).reshape(1, d)
 
     A = torch.cat(
-        [(1 - beta ** 2) * I_d + (beta ** 2) * cov_train, zero], 
+        [(1 - beta ** 2) * I_d + (beta ** 2) * R_train, t_r], 
         dim=0
     )
-
     B_upper = torch.cat([
-        d / ell * (1 + rho) + (1 - beta ** 2) * I_d + (beta ** 2) * cov_train,
-        zero.T
+        (d / ell * (1 + rho) + (1 - beta ** 2)) * I_d + (beta ** 2) * R_train,
+        t_r.T
     ], dim=1)
     B_lower = torch.cat(
-        [zero, torch.tensor([(1 + rho) ** 2], **factory_kwargs)[:, None]],
+        [t_r, torch.tensor([(1 + rho) ** 2], **factory_kwargs)[:, None]],
         dim=1
     )
     B = torch.cat([B_upper, B_lower], dim=0)
-    res = 1. / d * torch.trace((Gamma @ B) @ Gamma.T) - 2./d * torch.trace(Gamma @ A) + (1 + rho)
+    res = 1. / d * torch.trace(Gamma @ B @ Gamma.T) - 2./d * torch.trace(Gamma @ A) + (1 + rho)
 
     return res.item()
     
@@ -52,8 +54,8 @@ def e_ICL_trace(Gamma, d, ell, rho, beta, cov_train, device='cuda', dtype=torch.
 
 #     return y, x, w, w_task_family_train, epsilon
 
-def draw_pretraining_torch(N, d, k, ell, rho, seed, strength=0.5, cov_type='identity', device='cuda', dtype=torch.float64):
-    torch.manual_seed(seed)
+def draw_pretraining_torch(N, d, k, ell, rho, seed, strength=0.5, cov_type='identity', device=config.DEVICE, dtype=torch.float64):
+    # torch.manual_seed(seed)
     factory_kwargs = dict(device=device, dtype=dtype)
 
     if cov_type == 'identity':
@@ -65,8 +67,7 @@ def draw_pretraining_torch(N, d, k, ell, rho, seed, strength=0.5, cov_type='iden
 
     x = torch.randn(N, ell + 1, d, **factory_kwargs) / torch.sqrt(torch.tensor(d, **factory_kwargs))
     
-    w_cov = cov_func(k, strength, device=device, dtype=dtype)
-    print(w_cov)
+    w_cov = cov_func(d, strength, device=device, dtype=dtype)
     w_task_family_train = corr.sample_task_weights(w_cov, d, k)
     w_task_family_train /= torch.linalg.norm(w_task_family_train, dim=1, keepdim=True)
     
@@ -107,8 +108,8 @@ def draw_test(N_test, w_task_family_train, beta, d, ell, rho, seed):
 
     return y_test, x_test, w_test, w_task_family_test
 
-def draw_test_torch(N_test, w_task_family_train, beta, d, ell, rho, seed, device='cuda', dtype=torch.float64):
-    torch.manual_seed(seed)
+def draw_test_torch(N_test, w_task_family_train, beta, d, ell, rho, seed, device=config.DEVICE, dtype=torch.float64):
+    # torch.manual_seed(seed)
     factory_kwargs = dict(device=device, dtype=dtype)
 
     x_test = torch.randn(N_test, ell + 1, d, **factory_kwargs) / torch.sqrt(torch.tensor(d, **factory_kwargs))
@@ -200,7 +201,7 @@ def test_error(Gamma, N_test, beta, ell, rho, w_task_family_train, d, seed):
     mse = np.mean((y_pred - y_test[:, ell]) ** 2)
     return mse
 
-def test_error_torch(Gamma, N_test, beta, ell, rho, w_task_family_train, d, seed, device='cuda'):
+def test_error_torch(Gamma, N_test, beta, ell, rho, w_task_family_train, d, seed, device=config.DEVICE):
     y_test, x_test, w_test, w_task_family_test = draw_test_torch(
         N_test, w_task_family_train, beta, d, ell, rho, seed, device=device
     )
@@ -295,7 +296,7 @@ if __name__ == "__main__":
     rho = 0.5
 
     print('Getting training data...')
-    y, x, w, w_task_family_train, epsilon = draw_pretraining_torch(N, d, k, ell, rho, cov_type='powerlaw', seed=10, device='cpu')
+    y, x, w, w_task_family_train, epsilon = draw_pretraining_torch(N, d, k, ell, rho, cov_type='powerlaw', seed=10, device=config.DEVICE)
 
     print(w_task_family_train)
 

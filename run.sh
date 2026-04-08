@@ -3,9 +3,9 @@
 #SBATCH --error=logs/%x-%j.err
 #SBATCH --mem=32G
 #SBATCH --job-name=icl_task_familiarity
-#SBATCH --partition=kempner_requeue
+#SBATCH --partition=kempner_h100
 #SBATCH --account=kempner_pehlevan_lab
-#SBATCH -n 4
+#SBATCH -n 16
 #SBATCH --gres=gpu:1
 #SBATCH --time=02:00:00
 
