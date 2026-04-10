@@ -4,57 +4,71 @@ import correlation as corr
 import config
 
 
-def e_ICL_trace(Gamma, d, ell, rho, beta, R_train, b_train, device=config.DEVICE, dtype=torch.float64):
-    device = Gamma.device if isinstance(Gamma, torch.Tensor) else device
-    factory_kwargs = dict(device=device, dtype=dtype)
+def _empirical_moments(w_task_family_train: torch.Tensor):
+    k, d = w_task_family_train.shape
 
-    # if cov_train is None:
-    #     cov_train = torch.eye(d, **factory_kwargs)
-    
-    I_d = torch.eye(d, **factory_kwargs)
-    # zero = torch.zeros(1, d, **factory_kwargs)
+    b_train = torch.mean(w_task_family_train, dim=0)
+    R_train = (w_task_family_train.T @ w_task_family_train) / k
 
-    t_r = ((1 + rho) * beta * b_train).reshape(1, d)
+    return b_train, R_train
 
-    A = torch.cat(
-        [(1 - beta ** 2) * I_d + (beta ** 2) * R_train, t_r], 
-        dim=0
+
+def e_(Gamma, alpha, rho, w_task_family_train, error_type):
+    k, d = w_task_family_train.shape
+
+    if error_type == 'ICL':
+        b_train = torch.zeros(d, device=Gamma.device, dtype=Gamma.dtype)
+        R_train = torch.eye(d, device=Gamma.device, dtype=Gamma.dtype)
+
+    if error_type == 'IDG':
+        b_train, R_train = _empirical_moments(w_task_family_train.to(device=Gamma.device, dtype=Gamma.dtype))
+
+    ell = alpha * d
+    device = Gamma.device
+    dtype = Gamma.dtype
+
+    upper_right = ((1.0 + 2.0 / ell) * (1.0 + rho) * b_train).reshape(d, 1)
+    lower_left = upper_right.T
+    lower_right = torch.tensor(
+        [[(1.0 + 2.0 / ell) * (1.0 + rho) ** 2]], device=device, dtype=dtype
     )
-    B_upper = torch.cat([
-        (d / ell * (1 + rho) + (1 - beta ** 2)) * I_d + (beta ** 2) * R_train,
-        t_r.T
-    ], dim=1)
-    B_lower = torch.cat(
-        [t_r, torch.tensor([(1 + rho) ** 2], **factory_kwargs)[:, None]],
-        dim=1
+
+    A_train = torch.cat(
+        [R_train, ((1.0 + rho) * b_train).reshape(1, d)], dim=0
     )
-    B = torch.cat([B_upper, B_lower], dim=0)
-    res = 1. / d * torch.trace(Gamma @ B @ Gamma.T) - 2./d * torch.trace(Gamma @ A) + (1 + rho)
 
-    return res.item()
+    B_upper = torch.cat(
+        [((1.0 + rho) / alpha) * torch.eye(d, device=device, dtype=dtype) + R_train, upper_right],
+        dim=1,
+    )
+    B_lower = torch.cat([lower_left, lower_right], dim=1)
+
+    B_train = torch.cat([B_upper, B_lower], dim=0)
+    second_order = 1. / d * torch.trace(Gamma @ B_train @ Gamma.T)
+    first_order = 2. / d * torch.trace(Gamma @ A_train)
+
+    return second_order - first_order + (1. + rho)
+
+
+def diff_matrix(Gamma, rho, beta, w_task_family_train):
+    d, _ = Gamma.shape
+    device = Gamma.device
+    dtype = Gamma.dtype
+
+    b_train, _ = _empirical_moments(w_task_family_train.to(device=device, dtype=dtype))
+
+    Gamma_1 = Gamma[:, :d]
+    Gamma_2 = Gamma[:, d:]
+    scalar = (b_train.T @ (Gamma_1.T - torch.eye(d, device=device, dtype=dtype)) @ Gamma_2)
+
+    return 2. * (1. + rho) * (beta - beta ** 2) / d * scalar.squeeze()
+
+
+def e_TF(beta, e_ICL, e_IDG, diff):
+    return (1 - beta ** 2) * e_ICL + beta ** 2 * e_IDG + diff
     
 
-# def draw_pretraining(N, d, k, ell, rho, seed):
-#     """
-#     Generates pretraining for N sample sequences, dimension d, k tasks, sequence length ell, and noise variance rho.
-#     - x_i ~ N(0, I_d/sqrt d)
-#     - w_t ~ Unif(S^{d - 1})
-#     - y_i = x_i @ w_t + epsilon_i, where epsilon_i ~ N(0, rho)
-#     """
-#     np.random.seed(seed)
-#     x = np.random.randn(N, ell + 1, d) / np.sqrt(d) # d-dimensional vectors with N sequences of length ell+1, normalized by sqrt(d)
-    
-#     w_task_family_train = np.random.randn(k, d)  # k task vectors in d dimensions
-#     w_task_family_train /= np.linalg.norm(w_task_family_train, axis=1, keepdims=True)  # normalizing to 1
-#     w_train_samples = np.random.randint(0, k, size=N)
-#     w = w_task_family_train[w_train_samples]  # shape (N, d)
-
-#     epsilon = np.random.randn(N, ell + 1) * np.sqrt(rho)  # noise with variance rho
-#     y = np.einsum('nij,nj->ni', x, w) + epsilon  # shape (N, ell + 1)
-
-#     return y, x, w, w_task_family_train, epsilon
-
-def draw_pretraining_torch(N, d, k, ell, rho, seed, strength=0.5, cov_type='identity', device=config.DEVICE, dtype=torch.float64):
+def draw_pretraining_torch(N, d, k, ell, rho, strength=0.5, cov_type='identity', device=config.DEVICE, dtype=torch.float64):
     # torch.manual_seed(seed)
     factory_kwargs = dict(device=device, dtype=dtype)
 
@@ -65,69 +79,57 @@ def draw_pretraining_torch(N, d, k, ell, rho, seed, strength=0.5, cov_type='iden
     elif cov_type == 'powerlaw':
         cov_func = corr.powerlaw_cov
 
-    x = torch.randn(N, ell + 1, d, **factory_kwargs) / torch.sqrt(torch.tensor(d, **factory_kwargs))
+    sqrt_d = torch.sqrt(torch.tensor(float(d), **factory_kwargs))
+    sqrt_rho = torch.sqrt(torch.tensor(float(rho), **factory_kwargs))
+
+    x = torch.randn(N, ell + 1, d, **factory_kwargs) / sqrt_d
     
     w_cov = cov_func(d, strength, device=device, dtype=dtype)
     w_task_family_train = corr.sample_task_weights(w_cov, d, k)
-    w_task_family_train /= torch.linalg.norm(w_task_family_train, dim=1, keepdim=True)
+    w_task_family_train = (
+        w_task_family_train / (torch.linalg.norm(w_task_family_train, dim=1, keepdim=True) + 1e-12)
+        * sqrt_d
+    )
     
     w_train_samples = torch.randint(0, k, (N,), device=device)
     w = w_task_family_train[w_train_samples]  # shape (N, d)
 
     # y_i = x_i @ w_t + epsilon_i
-    epsilon = torch.randn(N, ell + 1, **factory_kwargs) * torch.sqrt(torch.tensor(rho, **factory_kwargs))
+    epsilon = torch.randn(N, ell + 1, **factory_kwargs) * sqrt_rho
     y = torch.einsum('nij,nj->ni', x, w) + epsilon  # shape (N, ell + 1)
 
     return y, x, w, w_task_family_train, w_cov, epsilon
 
-def draw_test(N_test, w_task_family_train, beta, d, ell, rho, seed):
-    """
-    Generates test data given w_task_family_train, beta in [0, 1], and zeta ~ N(0, 1)
-    - sample zeta ~ N(0, I_d), and project to orthogonal complement of w_train and normalize
-    - define w_test = beta * w_train + sqrt(1 - beta^2) * zeta
-    - cosine similairy <w_test, w_train> = beta
-
-    - sequences generated as x_i ~ N(0, I_d/sqrt d)
-    - y_i = x_i @ w_test_t + epsilon_i, where epsilon_i ~ N(0, rho) and t ~ Unif({1, ..., k})
-    """
-    np.random.seed(seed)
-    x_test = np.random.randn(N_test, ell + 1, d) / np.sqrt(d)  # shape (N_test, ell + 1, d)
-    k = w_task_family_train.shape[0]
-
-    zeta = np.random.randn(k, d)
-    proj = np.sum(zeta * w_task_family_train, axis=1, keepdims=True) # (k, 1)
-    zeta_perp = zeta - proj * w_task_family_train  # (k, d)
-    zeta_perp /= (np.linalg.norm(zeta_perp, axis=1, keepdims=True) + 1e-12)  # normalize to unit length
-
-    w_task_family_test = beta * w_task_family_train + np.sqrt(1 - beta ** 2) * zeta_perp
-    w_test_samples = np.random.randint(0, k, size=N_test)
-    w_test = w_task_family_test[w_test_samples]  # shape (N_test, d)
-
-    epsilon = np.random.randn(N_test, ell + 1) * np.sqrt(rho)  # noise with variance rho
-    y_test = np.einsum('nij,nj->ni', x_test, w_test) + epsilon  # shape (N_test, ell + 1)
-
-    return y_test, x_test, w_test, w_task_family_test
-
-def draw_test_torch(N_test, w_task_family_train, beta, d, ell, rho, seed, device=config.DEVICE, dtype=torch.float64):
+def draw_test_torch(N_test, w_task_family_train, beta, d, ell, rho, device=config.DEVICE, dtype=torch.float64):
     # torch.manual_seed(seed)
     factory_kwargs = dict(device=device, dtype=dtype)
 
-    x_test = torch.randn(N_test, ell + 1, d, **factory_kwargs) / torch.sqrt(torch.tensor(d, **factory_kwargs))
+    sqrt_d = torch.sqrt(torch.tensor(float(d), **factory_kwargs))
+    sqrt_rho = torch.sqrt(torch.tensor(float(rho), **factory_kwargs))
+    sqrt_one_minus_beta2 = torch.sqrt(
+        torch.tensor(1.0 - beta ** 2, **factory_kwargs)
+    )
+
+    x_test = torch.randn(N_test, ell + 1, d, **factory_kwargs) / sqrt_d
     k = w_task_family_train.shape[0]
 
     zeta = torch.randn(k, d, **factory_kwargs)
     proj = torch.sum(zeta * w_task_family_train, dim=1, keepdim=True) # (k, 1)
     zeta_perp = zeta - proj * w_task_family_train  # (k, d)
-    zeta_perp /= (torch.linalg.norm(zeta_perp, dim=1, keepdim=True) + 1e-12)
+    zeta_perp = (
+        zeta_perp / (torch.linalg.norm(zeta_perp, dim=1, keepdim=True) + 1e-12)
+        * sqrt_d
+    )
 
-    w_task_family_test = beta * w_task_family_train + torch.sqrt(torch.tensor(1 - beta ** 2, **factory_kwargs)) * zeta_perp
+    w_task_family_test = beta * w_task_family_train + sqrt_one_minus_beta2 * zeta_perp
     w_test_samples = torch.randint(0, k, (N_test,), device=device)
     w_test = w_task_family_test[w_test_samples]  # shape (N_test, d)
 
-    epsilon = torch.randn(N_test, ell + 1, **factory_kwargs) * torch.sqrt(torch.tensor(rho, **factory_kwargs))
+    epsilon = torch.randn(N_test, ell + 1, **factory_kwargs) * sqrt_rho
     y_test = torch.einsum('nij,nj->ni', x_test, w_test) + epsilon
 
     return y_test, x_test, w_test, w_task_family_test
+
 
 def H_Z_torch(y, x):
     """
@@ -142,36 +144,6 @@ def H_Z_torch(y, x):
 
     H_Z_res = H_Z_res * x[:, ell, :].reshape(N, d, 1)  # N by d by (d + 1)
     return H_Z_res
-
-def H_Z(y, x):
-    """
-    Producing H_Z. For each of N sequences, we produce d by (d + 1) feature matrix.
-        return: H_Z: N by d by (d + 1) array
-    
-    y: N by (ell + 1) array of outputs
-    x: N by (ell + 1) by d array of inputs
-    """
-
-    N, ell, d = x.shape
-    ell -= 1
-
-    H_Z_block = np.einsum('ni,nij->nj', y[:, :ell], x[:, :ell, :]).reshape(N, 1, d) * d / ell
-    y_square_sum = np.sum(y[:, :ell] ** 2, axis=1).reshape(N, 1, 1) / ell
-    H_Z = np.concatenate([H_Z_block, y_square_sum], axis=2)  # N by 1 by (d + 1)
-
-    H_Z = H_Z * x[:, ell, :].reshape(N, d, 1)  # N by d by (d + 1)
-    return H_Z
-
-
-def gamma_star(y, x, lam):
-    N, ell, d = x.shape
-    ell -= 1
-    
-    H = H_Z(y, x).reshape(N, d * (d + 1))
-    y_last = y[:, ell].reshape(N)
-
-    gamma = np.linalg.solve(H.T @ H + (N / d) * lam * np.eye(d * (d + 1)), H.T @ y_last)
-    return gamma.reshape(d, d + 1)
 
 
 def gamma_star_torch(y, x, lam):
@@ -190,20 +162,10 @@ def gamma_star_torch(y, x, lam):
     gamma = torch.linalg.solve(lhs, rhs)
     return gamma.reshape(d, d + 1)
 
-def test_error(Gamma, N_test, beta, ell, rho, w_task_family_train, d, seed):
-    y_test, x_test, w_test, w_task_family_test = draw_test(
-        N_test, w_task_family_train, beta, d, ell, rho, seed
-    )
 
-    H_z_test = H_Z(y_test, x_test)  # N_test by d by (d + 1)
-    y_pred = np.einsum('nkl,kl->n', H_z_test, Gamma) # N_test array 
-
-    mse = np.mean((y_pred - y_test[:, ell]) ** 2)
-    return mse
-
-def test_error_torch(Gamma, N_test, beta, ell, rho, w_task_family_train, d, seed, device=config.DEVICE):
+def test_error_torch(Gamma, N_test, beta, ell, rho, w_task_family_train, d, device=config.DEVICE):
     y_test, x_test, w_test, w_task_family_test = draw_test_torch(
-        N_test, w_task_family_train, beta, d, ell, rho, seed, device=device
+        N_test, w_task_family_train, beta, d, ell, rho, device=device
     )
 
     H_z_test = H_Z_torch(y_test, x_test)  # N_test by d by (d + 1)

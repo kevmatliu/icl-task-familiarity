@@ -1,7 +1,13 @@
-commands.txt
 **/__pycache__/
+
+commands.txt
+main/old_common.py
+
+
+logs/
 main/results/
 main/logs_stdout/
+
 venv/
-logs/
+
 .gitignore
