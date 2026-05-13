@@ -11,10 +11,9 @@ import numpy as np
 import torch
 
 import config
-try:
-    from utils import run_single_experiment_batched_mc
-except ImportError:
-    from utils_cluster import run_single_experiment_batched_mc
+
+from utils import run_single_experiment_batched_mc
+
 
 BASE_DIR = Path(__file__).resolve().parent
 RESULTS_DIR = BASE_DIR / 'results' / 'tau'
@@ -82,10 +81,7 @@ def _default_jsonl_path(task_id=None):
 
 def shard_combinations(param_grid, task_id=0, total_tasks=1):
     """
-    Split the Cartesian parameter grid across SLURM array tasks.
-
-    Uses numpy.array_split so all combinations are covered even when the grid
-    size is not divisible by total_tasks.
+    SLURM array tasks split
     """
     if total_tasks <= 0:
         raise ValueError(f'total_tasks must be positive, got {total_tasks}')
