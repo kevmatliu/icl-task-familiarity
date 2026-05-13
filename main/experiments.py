@@ -1,41 +1,63 @@
-import numpy as np
+import os
 import json
 import argparse
 import logging
-import torch
 import time
 import gc
 from pathlib import Path
 from itertools import product
 
+import numpy as np
+import torch
+
 import config
-from utils import *
+try:
+    from utils import run_single_experiment_batched_mc
+except ImportError:
+    from utils_cluster import run_single_experiment_batched_mc
 
 BASE_DIR = Path(__file__).resolve().parent
-RESULTS_DIR = BASE_DIR / 'results'
+RESULTS_DIR = BASE_DIR / 'results' / 'tau'
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 LOG_DIR = BASE_DIR / 'logs_stdout'
 LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-log_file = LOG_DIR / f'run_{int(time.time())}.log'
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s | %(name)s | %(levelname)s | %(message)s',
-    handlers=[
-        logging.FileHandler(log_file),
-        logging.StreamHandler()
-    ]
-)
 
-logger = logging.getLogger(__name__)
+def _slurm_int(name, default=None):
+    value = os.environ.get(name)
+    if value is None or value == '':
+        return default
+    return int(value)
 
 
-def convert_tensor_scalar(value):
-    if isinstance(value, torch.Tensor) and value.numel() == 1:
-        return value.item()
-    
-    return value
+def configure_torch_threads(cpus_per_task=None):
+    """Respect --cpus-per-task for CPU-side Torch/OpenMP work."""
+    if cpus_per_task is None:
+        cpus_per_task = _slurm_int('SLURM_CPUS_PER_TASK', 1)
+    cpus_per_task = max(1, int(cpus_per_task))
+
+    torch.set_num_threads(cpus_per_task)
+    torch.set_num_interop_threads(max(1, min(4, cpus_per_task)))
+    os.environ.setdefault('OMP_NUM_THREADS', str(cpus_per_task))
+    os.environ.setdefault('MKL_NUM_THREADS', str(cpus_per_task))
+    return cpus_per_task
+
+
+def setup_logging(task_id=None):
+    suffix = f'task_{task_id}' if task_id is not None else f'run_{int(time.time())}'
+    log_file = LOG_DIR / f'{suffix}_{int(time.time())}.log'
+    logging.basicConfig(
+        level=logging.INFO,
+        format='%(asctime)s | %(name)s | %(levelname)s | %(message)s',
+        handlers=[logging.FileHandler(log_file), logging.StreamHandler()],
+        force=True,
+    )
+    return logging.getLogger(__name__)
+
+
+logger = setup_logging()
+
 
 def cleanup_cuda():
     gc.collect()
@@ -44,135 +66,248 @@ def cleanup_cuda():
         torch.cuda.ipc_collect()
 
 
-def run_sweep(param_grid, jsonl_file_path=None):
-    if jsonl_file_path is None:
-        jsonl_file_path = RESULTS_DIR / f'experiment_results_{int(time.time())}.jsonl'
+def _json_safe(value):
+    if isinstance(value, np.generic):
+        return value.item()
+    if isinstance(value, np.ndarray):
+        return value.tolist()
+    return value
+
+
+def _default_jsonl_path(task_id=None):
+    if task_id is None:
+        return RESULTS_DIR / f'experiment_results_{int(time.time())}.jsonl'
+    return RESULTS_DIR / f'experiment_results_task_{task_id:04d}.jsonl'
+
+
+def shard_combinations(param_grid, task_id=0, total_tasks=1):
+    """
+    Split the Cartesian parameter grid across SLURM array tasks.
+
+    Uses numpy.array_split so all combinations are covered even when the grid
+    size is not divisible by total_tasks.
+    """
+    if total_tasks <= 0:
+        raise ValueError(f'total_tasks must be positive, got {total_tasks}')
+    if task_id < 0 or task_id >= total_tasks:
+        raise ValueError(f'task_id must be in [0, {total_tasks - 1}], got {task_id}')
 
     keys, values = zip(*param_grid.items())
-    for combo in product(*values):
+    all_combinations = list(product(*values))
+    index_shards = np.array_split(np.arange(len(all_combinations)), total_tasks)
+    my_indices = index_shards[task_id]
+    return keys, all_combinations, my_indices
+
+
+def run_sweep(param_grid, task_id=0, total_tasks=1, jsonl_file_path=None, monte_carlo_runs=5, mc_batch_size=1):
+    if jsonl_file_path is None:
+        jsonl_file_path = _default_jsonl_path(task_id if total_tasks > 1 else None)
+    jsonl_file_path = Path(jsonl_file_path)
+    jsonl_file_path.parent.mkdir(parents=True, exist_ok=True)
+
+    keys, all_combinations, my_indices = shard_combinations(param_grid, task_id, total_tasks)
+    logger.info(
+        'Task %s/%s handling %s of %s parameter combinations; writing to %s',
+        task_id,
+        total_tasks,
+        len(my_indices),
+        len(all_combinations),
+        jsonl_file_path,
+    )
+
+    for local_i, combo_idx in enumerate(my_indices):
+        combo = all_combinations[int(combo_idx)]
         params = dict(zip(keys, combo))
-        logger.info(f'Running experiment with parameters: {params}')
-        run_dict = run_experiment(params)
+        logger.info('Running shard item %s/%s, global combo %s: %s', local_i + 1, len(my_indices), combo_idx, params)
+        run_dict = run_experiment(params, monte_carlo_runs=monte_carlo_runs, mc_batch_size=mc_batch_size)
 
-        k = params['k']
-        d = params['d']
-        N_ = params['N']
-
-        kappa = k / d
-        tau = N_ / (d * d)
-
+        strength = params.get('strength', params.get('strengths', 0.0))
+        cov_type = params.get('cov_type', 'identity')
         jsonl_entry = {
-            'beta': params['beta'],
-            'alpha': params['alpha'],
-            'rho': params['rho'],
-            'strength': params['strengths'],
-            'kappa': kappa,
-            'tau': tau,
-            'cov_type': 'identity',
+            'task_id': task_id,
+            'total_tasks': total_tasks,
+            'combo_index': int(combo_idx),
+            'beta': _json_safe(params['beta']),
+            'alpha': _json_safe(params['alpha']),
+            'rho': _json_safe(params['rho']),
+            'strength': _json_safe(strength),
+            'kappa': _json_safe(params['kappa']),
+            'tau': _json_safe(params['tau']),
+            'cov_type': cov_type,
+            'monte_carlo_runs': monte_carlo_runs,
+            'mc_batch_size': mc_batch_size,
             'mse_runs': run_dict['mse'],
-            'mean_mse': np.mean(run_dict['mse']),
-            'std_mse': np.std(run_dict['mse']),
-            'mean_e_TF': np.mean(run_dict['e_TF']),
-            'std_e_TF': np.std(run_dict['e_TF']),
-            'mean_e_ICL': np.mean(run_dict['e_ICL']),
-            'std_e_ICL': np.std(run_dict['e_ICL']),
-            'mean_e_IDG': np.mean(run_dict['e_IDG']),
-            'std_e_IDG': np.std(run_dict['e_IDG']),
-            'mean_diff': np.mean(run_dict['diff']),
-            'std_diff': np.std(run_dict['diff'])
+            'mean_mse': float(np.mean(run_dict['mse'])),
+            'std_mse': float(np.std(run_dict['mse'])),
+            'mean_e_TF': float(np.mean(run_dict['e_TF'])),
+            'std_e_TF': float(np.std(run_dict['e_TF'])),
+            'mean_e_ICL': float(np.mean(run_dict['e_ICL'])),
+            'std_e_ICL': float(np.std(run_dict['e_ICL'])),
+            'mean_e_IDG': float(np.mean(run_dict['e_IDG'])),
+            'std_e_IDG': float(np.std(run_dict['e_IDG'])),
+            'mean_diff': float(np.mean(run_dict['diff'])),
+            'std_diff': float(np.std(run_dict['diff'])),
         }
         with open(jsonl_file_path, 'a') as f:
             f.write(json.dumps(jsonl_entry) + '\n')
 
         cleanup_cuda()
 
-def run_experiment(params):
-    lam = 1e-9
-    monte_carlo_runs = 10
-    
 
-    N = params['N']
-    N_test = 100
-    alpha = params['alpha']
-    beta = params['beta']
-    rho = params['rho']
-    strength = params['strengths']
-    k = params['k']
-    d = params['d']
-
-    kappa = k / d
-    tau = N / (d * d)
-
-    run_dict = {
+def _empty_run_dict():
+    return {
         'mse': [],
         'e_TF': [],
         'e_ICL': [],
         'e_IDG': [],
-        'diff': []
+        'diff': [],
     }
 
-    ell = int(alpha * d)
-    for run in range(monte_carlo_runs):
-        logger.info(f'Experiment starting: beta={beta}, alpha={alpha}, ell={ell}, d={d}, rho={rho}, kappa={kappa}, tau={tau}, strength={strength}, cov_type=identity, run={run}')
-        
-        with torch.inference_mode():
-            y_train, x_train, w_train, w_task_family_train, w_cov, epsilon = draw_pretraining_torch(
-                N, d, k, ell, rho, strength, cov_type='identity', device=config.DEVICE
+
+def _extend_run_dict(dst, src):
+    for key in dst:
+        dst[key].extend([float(x) for x in src[key]])
+
+
+def run_experiment(params, monte_carlo_runs=5, mc_batch_size=1):
+    alpha = params['alpha']
+    beta = params['beta']
+    d = params['d']
+    rho = params['rho']
+    kappa = params['kappa']
+    tau = params['tau']
+    strength = params.get('strength', params.get('strengths', 0.0))
+    cov_type = params.get('cov_type', 'identity')
+    lam = params.get('lam', 1e-9)
+
+    logger.info(
+        'MC start: beta=%s, alpha=%s, d=%s, rho=%s, kappa=%s, tau=%s, strength=%s, cov_type=%s, total_runs=%s, mc_batch_size=%s',
+        beta,
+        alpha,
+        d,
+        rho,
+        kappa,
+        tau,
+        strength,
+        cov_type,
+        monte_carlo_runs,
+        mc_batch_size,
+    )
+
+    run_dict = _empty_run_dict()
+    completed = 0
+    while completed < monte_carlo_runs:
+        cur_mc = min(mc_batch_size, monte_carlo_runs - completed)
+        logger.info(
+            'Starting MC sub-batch: runs %s-%s of %s, cur_mc=%s',
+            completed,
+            completed + cur_mc - 1,
+            monte_carlo_runs,
+            cur_mc,
+        )
+
+        res = run_single_experiment_batched_mc(
+            alpha=alpha,
+            beta=beta,
+            d=d,
+            rho=rho,
+            kappa=kappa,
+            tau=tau,
+            monte_carlo_runs=cur_mc,
+            strength=strength,
+            cov_type=cov_type,
+            lam=lam,
+            device=config.DEVICE,
+        )
+
+        _extend_run_dict(run_dict, res)
+
+        for local_run, (mse, e_tf, e_icl, e_idg, diff) in enumerate(
+            zip(res['mse'], res['e_TF'], res['e_ICL'], res['e_IDG'], res['diff'])
+        ):
+            global_run = completed + local_run
+            logger.info(
+                'beta=%s, alpha=%s, d=%s, rho=%s, strength=%s, kappa=%s, tau=%s, cov_type=%s, run=%s, mse=%.4f, e_TF=%.4f, e_ICL=%.4f, e_IDG=%.4f, diff=%.4f',
+                beta,
+                alpha,
+                d,
+                rho,
+                strength,
+                kappa,
+                tau,
+                cov_type,
+                global_run,
+                mse,
+                e_tf,
+                e_icl,
+                e_idg,
+                diff,
             )
-            Gamma = gamma_star_torch(y_train, x_train, lam)
-            mse = test_error_torch(Gamma, N_test, beta, ell, rho, w_task_family_train, d)
 
-        try:
-            e_ICL = e_(Gamma, alpha, rho, w_task_family_train=w_task_family_train, error_type='ICL')
-            e_IDG = e_(Gamma, alpha, rho, w_task_family_train=w_task_family_train, error_type='IDG')
-            diff = diff_matrix(Gamma, rho, beta, w_task_family_train)
+        completed += cur_mc
+        cleanup_cuda()
 
-            e_TF_ = e_TF(beta, e_ICL, e_IDG, diff)
-            e_TF_, e_ICL, e_IDG, diff = map(convert_tensor_scalar, [e_TF_, e_ICL, e_IDG, diff])
-
-        except Exception as e:
-            logger.error(f'Error computing e_TF: {e}')
-
-        run_dict['mse'].append(mse)
-        run_dict['e_TF'].append(e_TF_)
-        run_dict['e_ICL'].append(e_ICL)
-        run_dict['e_IDG'].append(e_IDG)
-        run_dict['diff'].append(diff)
-        logger.info(f"""beta={beta}, alpha={alpha}, ell={ell}, d={d}, rho={rho}, strength={strength},
-                        cov_type=identity, run={run}, mse={mse:.4f}, e_TF={e_TF_:.4f}, e_ICL={e_ICL:.4f}, e_IDG={e_IDG:.4f}, diff={diff:.4f}""")
-
-    logger.info(f'End iteration with alpha: {alpha}, beta: {beta}, rho: {rho}, kappa: {kappa}, tau: {tau}, strength: {strength}')
-
+    logger.info(
+        'End MC iteration: alpha=%s, beta=%s, rho=%s, kappa=%s, tau=%s, strength=%s, total_completed=%s',
+        alpha,
+        beta,
+        rho,
+        kappa,
+        tau,
+        strength,
+        len(run_dict['mse']),
+    )
     return run_dict
 
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     parser = argparse.ArgumentParser(description='ICL task familiarity experiments')
-    # parser.add_argument('--jsonl_file_path', type=str, default='experiment_results.jsonl', help='Path to save experiment results in JSONL format')
-    parser.add_argument('--task_id', type=int, default=0, help='SLURM task id')
+    parser.add_argument('--task_id', type=int, default=None, help='SLURM array task id; defaults to SLURM_ARRAY_TASK_ID or 0')
+    parser.add_argument('--total_tasks', type=int, default=None, help='SLURM array task count; defaults to SLURM_ARRAY_TASK_COUNT or 1')
+    parser.add_argument('--jsonl_file_path', type=str, default=None, help='Optional explicit output path. Defaults to one file per array task.')
+    parser.add_argument('--monte_carlo_runs', type=int, default=5, help='Total independent Monte Carlo runs per parameter setting')
+    parser.add_argument('--mc_batch_size', type=int, default=1, help='How many Monte Carlo runs to vectorize at once. Use 1 or 2 for d=128 to avoid OOM.')
+    parser.add_argument('--cpus_per_task', type=int, default=None, help='Defaults to SLURM_CPUS_PER_TASK')
     args = parser.parse_args()
 
-    d = 100
+    task_id = args.task_id
+    if task_id is None:
+        task_id = _slurm_int('SLURM_ARRAY_TASK_ID', 0)
 
-    betas = [0.0, 0.1, 0.25, 0.5, 0.75, 0.9, 1.0]
-    # betas = betas[::-1]
-    alphas = [2.35, 5.5, 9.62, 22.7, 100]
-    rhos = [0.1, 0.5, 1.0, 2.0]
-    kappas = [0.1, 0.25, 0.5, 0.75, 1.0, 2.0]
-    taus = [0.1, 0.25, 0.5, 1.0]
-    # strengths = [0.1, 0.25, 0.5, 0.75, 0.9, 0.99]
+    total_tasks = args.total_tasks
+    if total_tasks is None:
+        total_tasks = _slurm_int('SLURM_ARRAY_TASK_COUNT', 1)
+
+    logger = setup_logging(task_id=task_id)
+    cpus = configure_torch_threads(args.cpus_per_task)
+    logger.info('Using task_id=%s, total_tasks=%s, torch threads=%s, device=%s', task_id, total_tasks, cpus, config.DEVICE)
+
+    d = 64
+    betas = np.linspace(0.0, 1.0, 10)
+    # alphas = np.logspace(np.log10(2.35), np.log10(1_000), 50)
+    # alphas = np.logspace(np.log10(2.35), np.log10(100), 20)
+    alphas = np.logspace(np.log10(2.35), np.log(100), 10)
+    # rhos = [0.5, 1.0, 2.0]
+    rhos = [0.5]
+    kappas = np.linspace(0.1, 2.0, 10)
+    taus = np.linspace(0.1, 2.0, 10)
     strengths = [0.0]
-
 
     param_grid = {
         'd': [d],
         'beta': betas,
         'alpha': alphas,
         'rho': rhos,
-        'strengths': strengths,
-        'N': [int(tau * d * d) for tau in taus],
-        'k': [int(kappa * d) for kappa in kappas]
+        'strength': strengths,
+        'kappa': kappas,
+        'tau': taus,
     }
 
-    run_sweep(param_grid)
-
+    run_sweep(
+        param_grid,
+        task_id=task_id,
+        total_tasks=total_tasks,
+        jsonl_file_path=args.jsonl_file_path,
+        monte_carlo_runs=args.monte_carlo_runs,
+        mc_batch_size=args.mc_batch_size,
+    )

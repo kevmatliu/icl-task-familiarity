@@ -1,13 +1,15 @@
 #!/bin/bash
-#SBATCH --output=logs/%x-%j.out
-#SBATCH --error=logs/%x-%j.err
+#SBATCH --output=logs/%x-%A_%a.out
+#SBATCH --error=logs/%x-%A_%a.err
 #SBATCH --mem=32G
+#SBATCH --array=0-15
 #SBATCH --job-name=icl_task_familiarity
-#SBATCH --partition=kempner_h100
+#SBATCH --partition=kempner_requeue
 #SBATCH --account=kempner_pehlevan_lab
-#SBATCH -n 4
-#SBATCH --gres=gpu:1
-#SBATCH --time=02:00:00
+#SBATCH --ntasks-per-core=2
+#SBATCH --gres=gpu:2
+#SBATCH --cpus-per-task=12
+#SBATCH --time=08:00:00
 
 # module load cuda
 module load python/3.10.9-fasrc01
